@@ -2,7 +2,7 @@ use rand::Rng;
 
 fn main() {
     println!("Hello, world!");
-    let field = MineField::new(10, 5, 10).unwrap();
+    let field = MineField::new(10, 5, 5).unwrap();
     let _ = field.print();
 }
 
@@ -20,7 +20,7 @@ struct MineField {
 }
 
 impl MineField {
-    fn new(ncol: usize, nrow: usize, nmines: usize) -> Result<MineField, &'static str> {
+    fn new(nrow: usize, ncol: usize, nmines: usize) -> Result<MineField, &'static str> {
         let ntiles = ncol*nrow;
         if ntiles <= 0 { panic!("tried to create a MineField with no tiles") }
         let mut tiles: Vec<Tile> = Vec::new();
@@ -32,67 +32,57 @@ impl MineField {
         Ok(field)
     }
 
-    fn populate_mines(&mut self, remaining: usize) -> Result<(), &'static str> {
+    fn populate_mines(&mut self, nmines: usize) -> Result<(), &'static str> {
         let ntiles: usize = (self.nrow*self.ncol).into();
-        let target_ind: usize = rand::thread_rng().gen_range(0..ntiles);
-        let target_x: usize = target_ind % self.ncol;
-        let target_y: usize = target_ind/self.ncol;
-        let target_tile = &mut self.tiles[target_ind];
-        //let mut adj_ind: isize = -1;
-        // better to keep adj_x and adj_y separate (instead of combining into an index)
-        // that way, it's easy to check if the x is running off the edge of the field
-        let mut adj_x: isize = -1;
-        let mut adj_y: isize = -1;
+        let mut remaining = nmines;
 
-        if matches!(target_tile.content, TileContent::Mine) { // there's already a mine in the target tile
-            // TODO: replace this recursive implementation with an itterative one
-            // The recursive version easily causes stack overflows on dense mine fields!
-            self.populate_mines(remaining)?; // try again
-        } else {
-            target_tile.content = TileContent::Mine;
-
-            // update the adjacent tiles
-            'xloop: for i in -1..=1 {
-                adj_x = target_x as isize +i;
-                if (adj_x < 0) || (adj_x >= self.ncol as isize) {continue 'xloop}
-                'yloop: for j in -1..=1 {
-                    adj_y = target_y as isize +j;
-                    if (adj_y < 0) || (adj_y >= self.nrow as isize) {continue 'yloop}
-                    let adj_index = (adj_x as usize) +(adj_y as usize)*self.ncol;
-                    //print!("target_x: {target_x}, target_y: {target_y}, target_ind: {target_ind}, adj_x: {adj_x}, adj_y: {adj_y}, adj_index: {adj_index}, i: {i}, j: {j}\n");
-                    match self.tiles[adj_index].content {
-                        TileContent::Zero  => self.tiles[adj_index].content = TileContent::One,
-                        TileContent::One   => self.tiles[adj_index].content = TileContent::Two,
-                        TileContent::Two   => self.tiles[adj_index].content = TileContent::Three,
-                        TileContent::Three => self.tiles[adj_index].content = TileContent::Four,
-                        TileContent::Four  => self.tiles[adj_index].content = TileContent::Five,
-                        TileContent::Five  => self.tiles[adj_index].content = TileContent::Six,
-                        TileContent::Six   => self.tiles[adj_index].content = TileContent::Seven,
-                        TileContent::Seven => self.tiles[adj_index].content = TileContent::Eight,
-                        _ => (),
-                    }
-                }
+        while remaining > 0 {
+            // This is "slow" for fields that are large and dense.
+            // It might make more sense to remove mines from a fully-populated field,
+            // when > half of the tiles are mines.
+            let target_ind: usize = rand::thread_rng().gen_range(0..ntiles);
+            let target_x: usize = target_ind % self.ncol;
+            let target_y: usize = target_ind / self.ncol;
+            match self.place_mine(target_x, target_y) {
+                Ok(()) => remaining -= 1,
+                Err("occupied") => continue,
+                Err(other) => return Err(other),
             }
-        }
-
-        if remaining > 1 {
-            self.populate_mines(remaining-1)?;
         }
         Ok(())
     }
 
-    fn populate_adjacency(&mut self) -> Result<(), &'static str> {
-        /*
-        for x in 0..(self.nrow) {
-            for y in 0..(self.ncol) {
-                for i in -1..=1 {
-                    for j in -1..=1 {
-                        if (i+self.nrow < 0) | 
-                    }
+    fn place_mine(&mut self, target_x: usize, target_y: usize) -> Result<(), &'static str> {
+        let target_tile = &mut self.tiles[target_x+target_y*(self.ncol as usize)];
+
+        if matches!(target_tile.content, TileContent::Mine) { // there's already a mine in the target tile
+            return Err("occupied")
+        }
+        target_tile.content = TileContent::Mine;
+
+        // update the adjacent tiles
+        'xloop: for i in -1..=1 {
+            let adj_x = target_x as isize +i;
+            if (adj_x < 0) || (adj_x >= self.ncol as isize) {continue 'xloop}
+            'yloop: for j in -1..=1 {
+                let adj_y = target_y as isize +j;
+                if (adj_y < 0) || (adj_y >= self.nrow as isize) {continue 'yloop}
+                let adj_index = (adj_x as usize) +(adj_y as usize)*self.ncol;
+                //print!("target_x: {target_x}, target_y: {target_y}, target_ind: {target_ind}, adj_x: {adj_x}, adj_y: {adj_y}, adj_index: {adj_index}, i: {i}, j: {j}\n");
+                match self.tiles[adj_index].content {
+                    TileContent::Zero  => self.tiles[adj_index].content = TileContent::One,
+                    TileContent::One   => self.tiles[adj_index].content = TileContent::Two,
+                    TileContent::Two   => self.tiles[adj_index].content = TileContent::Three,
+                    TileContent::Three => self.tiles[adj_index].content = TileContent::Four,
+                    TileContent::Four  => self.tiles[adj_index].content = TileContent::Five,
+                    TileContent::Five  => self.tiles[adj_index].content = TileContent::Six,
+                    TileContent::Six   => self.tiles[adj_index].content = TileContent::Seven,
+                    TileContent::Seven => self.tiles[adj_index].content = TileContent::Eight,
+                    TileContent::Eight => panic!("tried to increment a tile that was already Eight"),
+                    TileContent::Mine => (),
                 }
             }
         }
-        */
         Ok(())
     }
 
@@ -117,3 +107,27 @@ impl MineField {
         Ok(())
     }
 }
+
+/*
+ * see ~/src/c/cdraw/cdraw.c and ~/src/bash/bdraw/bdraw.sh for info on how to handle inputs
+ * "\033[?1000h" turn on mouse reporting (see "Mouse tracking" and "Mouse Reporting" in `man console_codes`.)
+ * "\033[?1000l" turn off mouse reporting
+ * There are fancier escape codes (1005, 1006, 1015), but these don't work on my setup.
+ * I'm not sure if that's an issue with Kitty, tmux, or my configs, but I don't care too much at the moment.
+ * The main downside to the 1000 protocol is that x and y positions are limited to values from 1 to 223.
+ * (So, for locations past 223, it just reports 223.)
+ * That's plenty good for minesweeper though!
+ */
+struct MouseEvent { // can safely use smaller integer types; check console_codes
+    x: usize, // position from the left of the terminal, 1 based
+    y: usize, // position from the top of the terminal, 1 based
+    button: usize, // which button was pressed/released
+    shift: bool, // whether shift was held
+    meta: bool, // whether meta/alt was held
+    ctrl: bool, // whether control was held
+}
+
+fn read_mouse() -> Result<MouseEvent, &'static str> {
+    todo!();
+    Err("did nothing")
+ }
