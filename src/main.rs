@@ -2,7 +2,7 @@ use rand::Rng;
 
 fn main() {
     println!("Hello, world!");
-    let field = MineField::new(20, 20, 5).unwrap();
+    let field = MineField::new(10, 5, 10).unwrap();
     let _ = field.print();
 }
 
@@ -34,18 +34,45 @@ impl MineField {
 
     fn populate_mines(&mut self, remaining: usize) -> Result<(), &'static str> {
         let ntiles: usize = (self.nrow*self.ncol).into();
-        let index = rand::thread_rng().gen_range(0..ntiles);
-        let target_tile = &mut self.tiles[index];
-        //let target_tile: Option<&mut Tile> = self.tiles.get();
-        //let target_tile: &mut Tile = match target_tile {
-        //    Some(t) => t,
-        //    None => return Err("tried to place a mine where there was no tile"),
-        //};
+        let target_ind: usize = rand::thread_rng().gen_range(0..ntiles);
+        let target_x: usize = target_ind % self.ncol;
+        let target_y: usize = target_ind/self.ncol;
+        let target_tile = &mut self.tiles[target_ind];
+        //let mut adj_ind: isize = -1;
+        // better to keep adj_x and adj_y separate (instead of combining into an index)
+        // that way, it's easy to check if the x is running off the edge of the field
+        let mut adj_x: isize = -1;
+        let mut adj_y: isize = -1;
 
-        if matches!(target_tile.content, TileContent::Mine) {
+        if matches!(target_tile.content, TileContent::Mine) { // there's already a mine in the target tile
+            // TODO: replace this recursive implementation with an itterative one
+            // The recursive version easily causes stack overflows on dense mine fields!
             self.populate_mines(remaining)?; // try again
         } else {
             target_tile.content = TileContent::Mine;
+
+            // update the adjacent tiles
+            'xloop: for i in -1..=1 {
+                adj_x = target_x as isize +i;
+                if (adj_x < 0) || (adj_x >= self.ncol as isize) {continue 'xloop}
+                'yloop: for j in -1..=1 {
+                    adj_y = target_y as isize +j;
+                    if (adj_y < 0) || (adj_y >= self.nrow as isize) {continue 'yloop}
+                    let adj_index = (adj_x as usize) +(adj_y as usize)*self.ncol;
+                    //print!("target_x: {target_x}, target_y: {target_y}, target_ind: {target_ind}, adj_x: {adj_x}, adj_y: {adj_y}, adj_index: {adj_index}, i: {i}, j: {j}\n");
+                    match self.tiles[adj_index].content {
+                        TileContent::Zero  => self.tiles[adj_index].content = TileContent::One,
+                        TileContent::One   => self.tiles[adj_index].content = TileContent::Two,
+                        TileContent::Two   => self.tiles[adj_index].content = TileContent::Three,
+                        TileContent::Three => self.tiles[adj_index].content = TileContent::Four,
+                        TileContent::Four  => self.tiles[adj_index].content = TileContent::Five,
+                        TileContent::Five  => self.tiles[adj_index].content = TileContent::Six,
+                        TileContent::Six   => self.tiles[adj_index].content = TileContent::Seven,
+                        TileContent::Seven => self.tiles[adj_index].content = TileContent::Eight,
+                        _ => (),
+                    }
+                }
+            }
         }
 
         if remaining > 1 {
@@ -54,12 +81,27 @@ impl MineField {
         Ok(())
     }
 
-    fn print(&self) -> Result<(), &'static str> {
+    fn populate_adjacency(&mut self) -> Result<(), &'static str> {
+        /*
         for x in 0..(self.nrow) {
             for y in 0..(self.ncol) {
+                for i in -1..=1 {
+                    for j in -1..=1 {
+                        if (i+self.nrow < 0) | 
+                    }
+                }
+            }
+        }
+        */
+        Ok(())
+    }
+
+    fn print(&self) -> Result<(), &'static str> {
+        for x in 0..(self.ncol) {
+            for y in 0..(self.nrow) {
                 match self.tiles[(x+y*self.ncol) as usize].content {
                     TileContent::Mine  => print!("M"),
-                    TileContent::Zero  => print!("0"),
+                    TileContent::Zero  => print!(" "),
                     TileContent::One   => print!("1"),
                     TileContent::Two   => print!("2"),
                     TileContent::Three => print!("3"),
