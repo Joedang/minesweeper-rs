@@ -1,11 +1,18 @@
 use rand::Rng;
+use std::io::{self, Read, Write};
 
 fn main() {
-    println!("Hello, world!");
-    let field = MineField::new(10, 5, 5).unwrap();
-    let _ = field.print();
+    print!("\x1b[H\x1b[J"); // soft-clear the screen
+    let mut field = MineField::new(10, 5, 5).unwrap();
+    field.print().unwrap();
+    for _ in 1..=10 {
+        let event = read_mouse().unwrap();
+        println!("event: {:?}", event);
+        println!("clicked tile content: {:?}", field.clear_tile(event.x as usize, event.y as usize).unwrap());
+    }
 }
 
+#[derive(Clone, Debug)]
 enum TileContent { Mine, Zero, One, Two, Three, Four, Five, Six, Seven, Eight, }
 
 struct Tile {
@@ -69,7 +76,7 @@ impl MineField {
                 if (adj_y < 0) || (adj_y >= self.nrow as isize) {continue 'yloop}
                 let adj_index = (adj_x as usize) +(adj_y as usize)*self.ncol;
                 //print!("target_x: {target_x}, target_y: {target_y}, target_ind: {target_ind}, adj_x: {adj_x}, adj_y: {adj_y}, adj_index: {adj_index}, i: {i}, j: {j}\n");
-                match self.tiles[adj_index].content {
+                match self.tiles[adj_index].content { // consider making this its own function
                     TileContent::Zero  => self.tiles[adj_index].content = TileContent::One,
                     TileContent::One   => self.tiles[adj_index].content = TileContent::Two,
                     TileContent::Two   => self.tiles[adj_index].content = TileContent::Three,
@@ -90,6 +97,8 @@ impl MineField {
         for x in 0..(self.ncol) {
             for y in 0..(self.nrow) {
                 match self.tiles[(x+y*self.ncol) as usize].content {
+                    // TODO: color mode
+                    // TODO: hide un-probed tiles
                     TileContent::Mine  => print!("M"),
                     TileContent::Zero  => print!(" "),
                     TileContent::One   => print!("1"),
@@ -106,28 +115,97 @@ impl MineField {
         }
         Ok(())
     }
+
+    fn clear_tile(&mut self, target_x: usize, target_y: usize) -> Result<TileContent, &'static str> {
+        // TODO: something is bugged in the way tiles are looked up
+        if (target_x >= self.ncol) || (target_y >= self.nrow) { // checks for < 0 are implicit in the types
+            return Err("out of bounds");
+        }
+        let target_tile: &mut Tile =  &mut self.tiles[target_x+target_y*(self.ncol as usize)];
+        target_tile.probed = true;
+        //todo!("clear contiguous tiles");
+        return Ok(target_tile.content.clone());
+    }
+
+    fn flag_tile() {
+        todo!()
+    }
 }
 
-/*
- * see ~/src/c/cdraw/cdraw.c and ~/src/bash/bdraw/bdraw.sh for info on how to handle inputs
- * "\033[?1000h" turn on mouse reporting (see "Mouse tracking" and "Mouse Reporting" in `man console_codes`.)
- * "\033[?1000l" turn off mouse reporting
- * There are fancier escape codes (1005, 1006, 1015), but these don't work on my setup.
- * I'm not sure if that's an issue with Kitty, tmux, or my configs, but I don't care too much at the moment.
- * The main downside to the 1000 protocol is that x and y positions are limited to values from 1 to 223.
- * (So, for locations past 223, it just reports 223.)
- * That's plenty good for minesweeper though!
- */
-struct MouseEvent { // can safely use smaller integer types; check console_codes
-    x: usize, // position from the left of the terminal, 1 based
-    y: usize, // position from the top of the terminal, 1 based
-    button: usize, // which button was pressed/released
+#[derive(Debug)]
+struct MouseEvent {
+    x: u8, // position from the left of the terminal, 1 based
+    y: u8, // position from the top of the terminal, 1 based
+    button: MouseButton, // which button was pressed/released
     shift: bool, // whether shift was held
     meta: bool, // whether meta/alt was held
     ctrl: bool, // whether control was held
 }
 
+#[derive(Debug)]
+enum MouseButton { MB1, MB2, MB3, Release }
+
 fn read_mouse() -> Result<MouseEvent, &'static str> {
-    todo!();
-    Err("did nothing")
+    use termios::*;
+    let FD_STDIN  = 0;
+    let FD_STDOUT = 1;
+    let tio_in_old = Termios::from_fd(FD_STDIN).expect("failed to get stdin"); // copy old attributes
+    let mut tio_in = tio_in_old.clone();
+    let mut stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let mut buffer = [0;1];
+
+    //println!("termios_stdin: {:?}", tio_in);
+
+    // set terminal attributes
+    tio_in.c_lflag &= !ICANON; // no line-at-a-time, no line editing
+    tio_in.c_lflag &= !ECHO; // don't print chars as they're typed
+    tio_in.c_cc[VMIN] = 1; // byte-at-a-time
+    tio_in.c_cc[VTIME] = 0; // hang until you get a char
+    tcsetattr(FD_STDIN, TCSANOW, &tio_in).unwrap();
+
+    // turn on mouse reporting
+    print!("\x1b[?1000h");
+
+    // flush streams
+    //tcflush(FD_STDOUT, FD_STDOUT).expect("failed to flush output");
+    stdout.flush().unwrap();
+    termios::tcflush(FD_STDIN, FD_STDIN).unwrap();
+
+    // read the input (consider doing this char-at-a-time, to recover from key-presses)
+        // decode the report
+            // see ~/src/c/cdraw/cdraw.c and ~/src/bash/bdraw/bdraw.sh
+    stdin.read_exact(&mut buffer).unwrap();
+    if buffer[0] != 27 {return Err("invalid response")} // escape
+    stdin.read_exact(&mut buffer).unwrap();
+    if buffer[0] != 91 {return Err("invalid response")} // '['
+    stdin.read_exact(&mut buffer).unwrap();
+    if buffer[0] != 77 {return Err("invalid response")} // 'M'
+    stdin.read_exact(&mut buffer).unwrap();
+    let b: u8 = buffer[0] -32;
+    stdin.read_exact(&mut buffer).unwrap();
+    let x: u8 = buffer[0] -32 -1; // subtract offset and convert to 0-based index
+    stdin.read_exact(&mut buffer).unwrap();
+    let y: u8 = buffer[0] -32 -1;
+
+    let button: MouseButton;
+    let b_discriminant: u8 = b & 0b11; // get the least two bits
+    if          b_discriminant == 0 { button = MouseButton::MB1; } 
+        else if b_discriminant == 1 { button = MouseButton::MB2; } 
+        else if b_discriminant == 2 { button = MouseButton::MB3; } 
+        else if b_discriminant == 3 { button = MouseButton::Release; } 
+        else { panic!(); }
+    let shift = (b &   0b100) != 0; // check if certain bits are set
+    let meta  = (b &  0b1000) != 0;
+    let ctrl  = (b & 0b10000) != 0;
+
+    // turn off reporting
+    print!("\x1b[?1000l");
+    stdout.flush().unwrap();
+    //tcflush(FD_STDOUT, FD_STDOUT).expect("failed to flush output");
+
+    // restore the old attributes
+    tcsetattr(0, TCSANOW, &tio_in_old).expect("failed to restore attributes for stdin");
+
+    Ok(MouseEvent{x, y, button, shift, meta, ctrl})
  }
