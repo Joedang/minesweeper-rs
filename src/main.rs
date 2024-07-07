@@ -1,23 +1,71 @@
 use rand::Rng;
 use std::io::{self, Read, Write};
 
+// TODO: 
+// check win condition (progressive counter would be cool, instead of re-checking the whole field each move)
+// proper end-game behavior (show mines, show clicked mine)
+// ability to flag mines
+// match the color scheme of traditional (Windows) minesweeper
+// scoring system
+// timer?
+// create a status line(s)
+// take command line args
+//      density, width, height, help, score leaderboard
+// score history file (csv of score, userid, and date)
+//      take path for score history from environment variable
+
 fn main() {
-    print!("\x1b[H\x1b[J"); // soft-clear the screen
-    let mut field = MineField::new(10, 5, 5).unwrap();
-    field.print().unwrap();
-    for _ in 1..=10 {
+    let mut field = MineField::new(20, 10, 10).unwrap();
+    println!("Hello, world!");
+    soft_clear();
+    loop {
+        print!("\x1b[H");
+        field.print().unwrap();
         let event = read_mouse().unwrap();
+        match event.button {
+            MouseButton::Release => continue,
+            _ => (),
+        }
         println!("event: {:?}", event);
-        println!("clicked tile content: {:?}", field.clear_tile(event.x as usize, event.y as usize).unwrap());
+        //field.probe_tile(event.x as usize, event.y as usize).unwrap();
+        println!("clicked tile content: {:?}", field.probe_chain(event.x as usize, event.y as usize).unwrap());
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum TileContent { Mine, Zero, One, Two, Three, Four, Five, Six, Seven, Eight, }
 
 struct Tile {
     probed: bool,
     content: TileContent,
+}
+
+impl Tile {
+    fn print(&self) -> (){
+        let mut bg: &str = "\x1b[100m";
+        let mut rst: &str = "\x1b[0m";
+        if !self.probed {
+            print!("{bg}?{rst}");
+            return ()
+        }
+
+        bg = "\x1b[40";
+        rst = "\x1b[0m";
+        match self.content {
+            // TODO: color mode
+            // TODO: hide un-probed tiles
+            TileContent::Mine  => print!("{bg}\x1b[41;30mM\x1b[0m{rst}"), // red bg, black fg
+            TileContent::Zero  => print!("{bg}\x1b[39m {rst}"),
+            TileContent::One   => print!("{bg}\x1b[39m1{rst}"), // default
+            TileContent::Two   => print!("{bg}\x1b[95m2{rst}"), // light magenta
+            TileContent::Three => print!("{bg}\x1b[35m3{rst}"), // magenta
+            TileContent::Four  => print!("{bg}\x1b[34m4{rst}"), // blue
+            TileContent::Five  => print!("{bg}\x1b[36m5{rst}"), // cyan
+            TileContent::Six   => print!("{bg}\x1b[32m6{rst}"), // green
+            TileContent::Seven => print!("{bg}\x1b[33m7{rst}"), // yellow
+            TileContent::Eight => print!("{bg}\x1b[31m8{rst}"), // red
+        }
+    }
 }
 
 struct MineField {
@@ -27,7 +75,7 @@ struct MineField {
 }
 
 impl MineField {
-    fn new(nrow: usize, ncol: usize, nmines: usize) -> Result<MineField, &'static str> {
+    fn new(ncol: usize, nrow: usize, nmines: usize) -> Result<MineField, &'static str> {
         let ntiles = ncol*nrow;
         if ntiles <= 0 { panic!("tried to create a MineField with no tiles") }
         let mut tiles: Vec<Tile> = Vec::new();
@@ -94,37 +142,62 @@ impl MineField {
     }
 
     fn print(&self) -> Result<(), &'static str> {
-        for x in 0..(self.ncol) {
-            for y in 0..(self.nrow) {
-                match self.tiles[(x+y*self.ncol) as usize].content {
-                    // TODO: color mode
-                    // TODO: hide un-probed tiles
-                    TileContent::Mine  => print!("M"),
-                    TileContent::Zero  => print!(" "),
-                    TileContent::One   => print!("1"),
-                    TileContent::Two   => print!("2"),
-                    TileContent::Three => print!("3"),
-                    TileContent::Four  => print!("4"),
-                    TileContent::Five  => print!("5"),
-                    TileContent::Six   => print!("6"),
-                    TileContent::Seven => print!("7"),
-                    TileContent::Eight => print!("8"),
-                }
+        for y in 0..(self.nrow) {
+            for x in 0..(self.ncol) {
+                self.tiles[(x+y*self.ncol) as usize].print();
             }
             print!("\n")
         }
         Ok(())
     }
 
-    fn clear_tile(&mut self, target_x: usize, target_y: usize) -> Result<TileContent, &'static str> {
-        // TODO: something is bugged in the way tiles are looked up
+    fn probe_tile(&mut self, target_x: usize, target_y: usize) -> Result<TileContent, &'static str> {
+        // TODO: this should just be part of probe_chain()
+        let tile: &mut Tile = &mut self.tiles[target_x +target_y*self.ncol];
+        tile.probed = true;
+        match tile.content { // consider making this its own function
+            TileContent::Mine => { return Err("GAME OVER!"); },
+            _ => (),
+        }
+        return Ok(tile.content.clone())
+    }
+
+    fn probe_chain(&mut self, target_x: usize, target_y: usize) -> Result<TileContent, &'static str> {
         if (target_x >= self.ncol) || (target_y >= self.nrow) { // checks for < 0 are implicit in the types
             return Err("out of bounds");
         }
-        let target_tile: &mut Tile =  &mut self.tiles[target_x+target_y*(self.ncol as usize)];
-        target_tile.probed = true;
-        //todo!("clear contiguous tiles");
-        return Ok(target_tile.content.clone());
+        self.probe_tile(target_x, target_y).unwrap();
+        let target_tile: &mut Tile = &mut self.tiles[target_x +target_y*self.ncol];
+        let target_content = target_tile.content.clone();
+
+        // chain contiguous zeroes; probe adjacent tiles
+        // TODO: try to make this cleaner
+        let mut adj_x: isize;
+        let mut adj_y: isize;
+        for sign in [1,-1] {
+            for axis in [0, 1] {
+                adj_x = target_x as isize +sign*(1-axis);
+                adj_y = target_y as isize +sign*axis;
+                if     (adj_x < 0) || (adj_x >= self.ncol as isize) // bounds check
+                    || (adj_y < 0) || (adj_y >= self.nrow as isize) { continue }
+                let adj_x = adj_x as usize;
+                let adj_y = adj_y as usize;
+                let adj_content = self.tiles[adj_x +adj_y*self.ncol].content.clone();
+                let adj_probed = self.tiles[adj_x +adj_y*self.ncol].probed;
+                match adj_content { // consider making this its own function
+                    TileContent::Zero  => { if !adj_probed { self.probe_chain(adj_x, adj_y).unwrap(); } },
+                    TileContent::Mine => (),
+                    _ => {
+                        match target_content {
+                            TileContent::Zero => { self.probe_tile(adj_x, adj_y).unwrap(); },
+                            _ => (),
+                        }
+                    },
+                }
+            }
+
+        }
+        return Ok(target_content);
     }
 
     fn flag_tile() {
@@ -209,3 +282,7 @@ fn read_mouse() -> Result<MouseEvent, &'static str> {
 
     Ok(MouseEvent{x, y, button, shift, meta, ctrl})
  }
+
+fn soft_clear() -> () {
+    print!("\x1b[H\x1b[J"); // soft-clear the screen
+}
